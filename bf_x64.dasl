@@ -10,7 +10,6 @@ ffi.cdef'void getchar()' --don't care for the signature
 
 |.arch x64
 |.actionlist actions
-|.externnames externnames
 |
 |// Use rbx as our cell pointer.
 |// Since rbx is a callee-saved register, it will be preserved
@@ -29,9 +28,8 @@ ffi.cdef'void getchar()' --don't care for the signature
 
 return function(program)
 
-	-- Create the dynasm state, supplying the externnames list
-	-- we got from the preprocessor, which enables finding of extern symbols.
-	local Dst = dasm.new(actions, externnames)
+	-- Create the dynasm state.
+	local Dst = dasm.new(actions)
 
 	local maxpc   = 0
 	local maxtop  = 256
@@ -40,7 +38,17 @@ return function(program)
 
 	-- Function prologue.
 	|  push PTR
+	|.if WINDOWS
+	|  mov PTR, rcx
+	|.else
 	|  mov  PTR, rdi
+	|.endif
+	|
+	|.if WINDOWS
+	|  sub rsp, 32                            // allocate shadow space for putchar/getchar
+	|.elif OSX
+	|  sub rsp, 8                             // align stack to 16 bytes for putchar/getchar
+	|.endif
 
 	for c in string.gmatch(program, '.') do
 		if c == '>' then
@@ -52,15 +60,14 @@ return function(program)
 		elseif c == '-' then
 			|  dec  byte [PTR]
 		elseif c == '.' then
-			|  sub rsp, 8                      // align the stack (only OSX needs it)
+			|.if WINDOWS
+			|  movzx rcx, byte [PTR]
+			|.else
 			|  movzx edi, byte [PTR]
+			|.endif
 			|  callp putchar
-			|  add rsp, 8
 		elseif c == ',' then
-			|  sub rsp, 8                      // align the stack (only OSX needs it)
 			|  callp getchar
-			|  add rsp, 8
-			|  mov  byte [PTR], al
 		elseif c == '[' then
 			if top == maxtop then
 				error'Nesting too deep.'
@@ -87,11 +94,17 @@ return function(program)
 	end
 
 	-- Function epilogue.
+	|.if WINDOWS
+	|  add rsp, 32
+	|.elif OSX
+	|  add rsp, 8
+	|.endif
+	|
 	|  pop  PTR
 	|  ret
 
 	-- Link and encode the program.
-	local buf = Dst:build()
+	local buf, sz = Dst:build()
 
 	-- Take a function pointer to the top of the compiled program.
 	local fptr = ffi.cast('void (*)(char*)', buf)
