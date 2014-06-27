@@ -1,46 +1,33 @@
 --go @ luajit dynasm.lua -o bf_compiler.lua *
---brainfuck example adapted from http://blog.reverberate.org/2012/12/hello-jit-world-joy-of-simple-jits.html
---requires DynASM with Lua mode from http://luapower/dynasm
+--brainfuck jit compiler for demoing DynASM Lua mode (Cosmin Apreutesei, public domain).
+--adapted from http://blog.reverberate.org/2012/12/hello-jit-world-joy-of-simple-jits.html.
+
 local ffi = require'ffi'
 local dasm = require'dasm'
 
-ffi.cdef[[
-int getchar (void);
-int putchar (int character);
-]]
-
 |.arch x64
 |.actionlist actions
+|.externnames externnames
 |
 |// Use rbx as our cell pointer.
-|// Since rbx is a callee-save register, it will be preserved
+|// Since rbx is a callee-saved register, it will be preserved
 |// across our calls to getchar and putchar.
 |.define PTR, rbx
-|
-|// Macro for calling a function.
-|// In cases where our target is <=2**32 away we can use
-|//   | call &addr
-|// But since we don't know if it will be, we use this safe
-|// sequence instead.
-|.macro callp, addr
-|  mov64  rax, ffi.cast("uintptr_t", ffi.C.addr)
-|  call   rax
-|.endmacro
 
-local function compile(program)
+return function(program)
 
-	local Dst = dasm.new(actions)
+	-- Create the dynasm state, supplying the externnames list
+	-- we got from the preprocessor, which enables finding of extern symbols.
+	local Dst = dasm.new(actions, externnames)
 
-	local MAX_NESTING = 256
-
-	local maxpc = 0
-	local pcstack = ffi.new('int[?]', MAX_NESTING)
-	local top   = ffi.cast('int*', pcstack)
-	local limit = ffi.cast('int*', pcstack) + MAX_NESTING
+	local maxpc   = 0
+	local maxtop  = 256
+	local pcstack = ffi.new('int[?]', maxtop)
+	local top     = 0
 
 	-- Function prologue.
 	|  push PTR
-	|  mov  PTR, [esp+4]
+	|  mov  PTR, rdi
 
 	for c in string.gmatch(program, '.') do
 		if c == '>' then
@@ -53,28 +40,32 @@ local function compile(program)
 			|  dec  byte [PTR]
 		elseif c == '.' then
 			|  movzx edi, byte [PTR]
-			|  callp putchar
+			|  call extern putchar
 		elseif c == ',' then
-			|  callp getchar
-			|  mov   byte [PTR], al
+			|  call extern getchar
+			|  mov  byte [PTR], al
 		elseif c == '[' then
-			if top == limit then err("Nesting too deep.") end
+			if top == maxtop then
+				error'Nesting too deep.'
+			end
 			-- Each loop gets two pclabels: at the beginning and end.
 			-- We store pclabel offsets in a stack to link the loop
 			-- begin and end together.
 			maxpc = maxpc + 2
-			top[0] = maxpc
+			pcstack[top] = maxpc
 			top = top + 1
 			Dst:growpc(maxpc)
 			|  cmp  byte [PTR], 0
 			|  je   =>(maxpc-2)
 			|=>(maxpc-1):
 		elseif c == ']' then
-			if top == pcstack then err("Unmatched ']'") end
+			if top == 0 then
+				error'Unmatched ]'
+			end
 			top = top - 1
 			|  cmp  byte [PTR], 0
-			|  jne  =>(top[0]-1)
-			|=>(top[0]-2):
+			|  jne  =>(pcstack[top]-1)
+			|=>(pcstack[top]-2):
 		end
 	end
 
@@ -82,21 +73,14 @@ local function compile(program)
 	|  pop  PTR
 	|  ret
 
-	local buf, sz = Dst:build()
+	-- Link and encode the program.
+	local buf = Dst:build()
+
+	-- Take a function pointer to the top of the compiled program.
 	local fptr = ffi.cast('void (*)(char*)', buf)
-
-	local function program(mem)
-		local _ = buf --pin it
-		mem = mem or 64*1024
-		if type(mem) == 'number' then
-			mem = ffi.new('uint8_t[?]', mem)
-		end
-		fptr(mem)
-		return mem
-	end
-
-	return program, buf, sz
+	-- Allocate the program's scratch memory.
+	local cells = ffi.new('uint8_t[?]', 65536)
+	-- Run the program, passing the addr of the scratch memory.
+	fptr(cells)
 end
-
-return {compile = compile}
 

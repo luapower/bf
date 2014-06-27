@@ -1,18 +1,22 @@
 --go@ luajit dynasm.lua *
 --brainfuck jit compiler for demoing DynASM Lua mode (Cosmin Apreutesei, public domain).
 --adapted from http://blog.reverberate.org/2012/12/hello-jit-world-joy-of-simple-jits.html.
+
 local ffi = require'ffi'
 local dasm = require'dasm'
 
 |.arch x86
 |.actionlist actions
 |.externnames externnames
-
-|.define PTR, ebx        // callee-saved
+|
+|// Use ebx as our cell pointer.
+|// Since ebx is a callee-saved register, it will be preserved
+|// across our calls to getchar and putchar.
+|.define PTR, ebx
 
 return function(program)
 
-   -- Create the dynasm state, supplying the externnames list
+	-- Create the dynasm state, supplying the externnames list
 	-- we got from the preprocessor, which enables finding of extern symbols.
 	local Dst = dasm.new(actions, externnames)
 
@@ -27,20 +31,20 @@ return function(program)
 
 	for c in string.gmatch(program, '.') do
 		if c == '>' then
-			|  inc   PTR
+			|  inc  PTR
 		elseif c == '<' then
-			|  dec   PTR
+			|  dec  PTR
 		elseif c == '+' then
-			|  inc   byte [PTR]
+			|  inc  byte [PTR]
 		elseif c == '-' then
-			|  dec   byte [PTR]
+			|  dec  byte [PTR]
 		elseif c == '.' then
-			|  push  dword [PTR]
-			|  call  extern putchar
+			|  push dword [PTR]
+			|  call extern putchar
 			|  add esp, 4
 		elseif c == ',' then
-			|  call  extern getchar
-			|  mov   byte [PTR], al
+			|  call extern getchar
+			|  mov  byte [PTR], al
 		elseif c == '[' then
 			if top == maxtop then
 				error'Nesting too deep.'
@@ -52,16 +56,16 @@ return function(program)
 			pcstack[top] = maxpc
 			top = top + 1
 			Dst:growpc(maxpc)
-			|  cmp   byte [PTR], 0
-			|  je    =>(maxpc-2)
+			|  cmp  byte [PTR], 0
+			|  je   =>(maxpc-2)
 			|=>(maxpc-1):
 		elseif c == ']' then
 			if top == 0 then
 				error'Unmatched ]'
 			end
 			top = top - 1
-			|  cmp   byte [PTR], 0
-			|  jne   =>(pcstack[top]-1)
+			|  cmp  byte [PTR], 0
+			|  jne  =>(pcstack[top]-1)
 			|=>(pcstack[top]-2):
 		end
 	end
@@ -70,7 +74,7 @@ return function(program)
 	|  pop  PTR
 	|  ret
 
-	-- Link and encode the program
+	-- Link and encode the program.
 	local buf = Dst:build()
 
 	-- Take a function pointer to the top of the compiled program.
