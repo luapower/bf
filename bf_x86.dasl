@@ -1,4 +1,4 @@
---go@ luajit dynasm.lua *
+--go @ luajit dynasm.lua *
 --brainfuck jit compiler for demoing DynASM Lua mode (Cosmin Apreutesei, public domain).
 --adapted from http://blog.reverberate.org/2012/12/hello-jit-world-joy-of-simple-jits.html.
 

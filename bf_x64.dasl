@@ -1,9 +1,12 @@
---go @ luajit dynasm.lua -o bf_compiler.lua *
+--go @ luajit dynasm.lua *
 --brainfuck jit compiler for demoing DynASM Lua mode (Cosmin Apreutesei, public domain).
 --adapted from http://blog.reverberate.org/2012/12/hello-jit-world-joy-of-simple-jits.html.
 
 local ffi = require'ffi'
 local dasm = require'dasm'
+
+ffi.cdef'void putchar()' --don't care for the signature
+ffi.cdef'void getchar()' --don't care for the signature
 
 |.arch x64
 |.actionlist actions
@@ -13,6 +16,16 @@ local dasm = require'dasm'
 |// Since rbx is a callee-saved register, it will be preserved
 |// across our calls to getchar and putchar.
 |.define PTR, rbx
+|
+|// Macro for calling a function.
+|// In cases where our target is <=2**32 away we can use
+|//   | call &addr
+|// But since we don't know if it will be, we use this safe
+|// sequence instead.
+|.macro callp, addr
+|  mov64  rax, ffi.C.addr
+|  call   rax
+|.endmacro
 
 return function(program)
 
@@ -39,10 +52,14 @@ return function(program)
 		elseif c == '-' then
 			|  dec  byte [PTR]
 		elseif c == '.' then
+			|  sub rsp, 8                      // align the stack (only OSX needs it)
 			|  movzx edi, byte [PTR]
-			|  call extern putchar
+			|  callp putchar
+			|  add rsp, 8
 		elseif c == ',' then
-			|  call extern getchar
+			|  sub rsp, 8                      // align the stack (only OSX needs it)
+			|  callp getchar
+			|  add rsp, 8
 			|  mov  byte [PTR], al
 		elseif c == '[' then
 			if top == maxtop then
