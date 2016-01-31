@@ -1,6 +1,10 @@
 --brainfuck jit compiler ui (Cosmin Apreutesei, public domain).
+
+if ... == 'bf' then return end --prevent loading as module
+
 io.stdout:setvbuf'no'
 io.stderr:setvbuf'no'
+
 require'dynasm' --plug in the dasl loader
 local bf = require('bf_'..require'ffi'.arch) --load the bf compiler for this arch
 
